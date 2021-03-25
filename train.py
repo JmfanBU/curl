@@ -73,6 +73,9 @@ def parse_args():
     parser.add_argument('--save_model', default=False, action='store_true')
     parser.add_argument('--detach_encoder', default=False, action='store_true')
 
+    # noisy bg
+    parser.add_argument('--noisy_bg', default=False, action='store_true')
+
     parser.add_argument('--log_interval', default=100, type=int)
     args = parser.parse_args()
     return args
@@ -105,7 +108,7 @@ def evaluate(env, agent, video, num_episodes, L, step, args):
             video.save('%d.mp4' % step)
             L.log('eval/' + prefix + 'episode_reward', episode_reward, step)
             all_ep_rewards.append(episode_reward)
-        
+
         L.log('eval/' + prefix + 'eval_time', time.time()-start_time , step)
         mean_ep_reward = np.mean(all_ep_rewards)
         best_ep_reward = np.max(all_ep_rewards)
@@ -152,32 +155,88 @@ def make_agent(obs_shape, action_shape, args, device):
 
 def main():
     args = parse_args()
-    if args.seed == -1: 
+    if args.seed == -1:
         args.__dict__["seed"] = np.random.randint(1,1000000)
     utils.set_seed_everywhere(args.seed)
-    env = dmc2gym.make(
-        domain_name=args.domain_name,
-        task_name=args.task_name,
-        seed=args.seed,
-        visualize_reward=False,
-        from_pixels=(args.encoder_type == 'pixel'),
-        height=args.pre_transform_image_size,
-        width=args.pre_transform_image_size,
-        frame_skip=args.action_repeat
-    )
- 
+
+    pre_transform_image_size = args.pre_transform_image_size
+    pre_image_size = args.pre_transform_image_size # record the pre transform image size for translation
+
+    # resource_files = '~/packages/AdvGen/Invariant_RL/distractors/*.mp4'
+    resource_files = '~/packages/AdvGen/kinetics-downloader/dataset/train/arranging_flowers/*.mp4'
+    eval_resource_files = '~/packages/AdvGen/kinetics-downloader/dataset/test/*.mp4'
+    img_source = 'video'
+    total_frames=1000
+    if args.noisy_bg:
+        from noisy_bg.envs import dmc2gym
+        env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            resource_files=resource_files,
+            img_source=img_source,
+            total_frames=total_frames,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=pre_transform_image_size,
+            width=pre_transform_image_size,
+            frame_skip=args.action_repeat,
+            frame_stack=args.frame_stack,
+            extra='train',
+        )
+        eval_env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            resource_files=eval_resource_files,
+            img_source=img_source,
+            total_frames=total_frames,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=pre_transform_image_size,
+            width=pre_transform_image_size,
+            frame_skip=args.action_repeat,
+            frame_stack=args.frame_stack,
+            extra='eval',
+        )
+    else:
+        import dmc2gym
+        env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=pre_transform_image_size,
+            width=pre_transform_image_size,
+            frame_skip=args.action_repeat
+        )
+        eval_env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=pre_transform_image_size,
+            width=pre_transform_image_size,
+            frame_skip=args.action_repeat
+        )
+
     env.seed(args.seed)
+    eval_env.seed(args.seed)
 
     # stack several consecutive frames together
-    if args.encoder_type == 'pixel':
+    if args.encoder_type == 'pixel' and not args.noisy_bg:
         env = utils.FrameStack(env, k=args.frame_stack)
-    
+        eval_env = utils.FrameStack(eval_env, k=args.frame_stack)
+
     # make directory
-    ts = time.gmtime() 
-    ts = time.strftime("%m-%d", ts)    
+    ts = time.gmtime()
+    ts = time.strftime("%m-%d", ts)
     env_name = args.domain_name + '-' + args.task_name
     exp_name = env_name + '-' + ts + '-im' + str(args.image_size) +'-b'  \
-    + str(args.batch_size) + '-s' + str(args.seed)  + '-' + args.encoder_type
+    + str(args.batch_size) + '-s' + str(args.seed)  + '-' + args.encoder_type \
+    + '-stacked_frames' + str(args.frame_stack)
     args.work_dir = args.work_dir + '/'  + exp_name
 
     utils.make_dir(args.work_dir)
@@ -259,7 +318,7 @@ def main():
 
         # run training update
         if step >= args.init_steps:
-            num_updates = 1 
+            num_updates = 1
             for _ in range(num_updates):
                 agent.update(replay_buffer, L, step)
 

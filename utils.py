@@ -7,7 +7,6 @@ from collections import deque
 import random
 from torch.utils.data import Dataset, DataLoader
 import time
-from skimage.util.shape import view_as_windows
 
 class eval_mode(object):
     def __init__(self, *models):
@@ -77,7 +76,7 @@ class ReplayBuffer(Dataset):
         self.transform = transform
         # the proprioceptive obs is stored as float32, pixels obs as uint8
         obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
-        
+
         self.obses = np.empty((capacity, *obs_shape), dtype=obs_dtype)
         self.next_obses = np.empty((capacity, *obs_shape), dtype=obs_dtype)
         self.actions = np.empty((capacity, *action_shape), dtype=np.float32)
@@ -89,10 +88,10 @@ class ReplayBuffer(Dataset):
         self.full = False
 
 
-    
+
 
     def add(self, obs, action, reward, next_obs, done):
-       
+
         np.copyto(self.obses[self.idx], obs)
         np.copyto(self.actions[self.idx], action)
         np.copyto(self.rewards[self.idx], reward)
@@ -103,11 +102,11 @@ class ReplayBuffer(Dataset):
         self.full = self.full or self.idx == 0
 
     def sample_proprio(self):
-        
+
         idxs = np.random.randint(
             0, self.capacity if self.full else self.idx, size=self.batch_size
         )
-        
+
         obses = self.obses[idxs]
         next_obses = self.next_obses[idxs]
 
@@ -126,7 +125,7 @@ class ReplayBuffer(Dataset):
         idxs = np.random.randint(
             0, self.capacity if self.full else self.idx, size=self.batch_size
         )
-      
+
         obses = self.obses[idxs]
         next_obses = self.next_obses[idxs]
         pos = obses.copy()
@@ -134,7 +133,7 @@ class ReplayBuffer(Dataset):
         obses = random_crop(obses, self.image_size)
         next_obses = random_crop(next_obses, self.image_size)
         pos = random_crop(pos, self.image_size)
-    
+
         obses = torch.as_tensor(obses, device=self.device).float()
         next_obses = torch.as_tensor(
             next_obses, device=self.device
@@ -196,7 +195,7 @@ class ReplayBuffer(Dataset):
         return obs, action, reward, next_obs, not_done
 
     def __len__(self):
-        return self.capacity 
+        return self.capacity
 
 class FrameStack(gym.Wrapper):
     def __init__(self, env, k):
@@ -228,27 +227,22 @@ class FrameStack(gym.Wrapper):
         return np.concatenate(list(self._frames), axis=0)
 
 
-def random_crop(imgs, output_size):
+def random_crop(imgs, out=84):
     """
-    Vectorized way to do random crop using sliding windows
-    and picking out random ones
-
-    args:
-        imgs, batch images with shape (B,C,H,W)
+        args:
+        imgs: np.array shape (B,C,H,W)
+        out: output size (e.g. 84)
+        returns np.array
     """
-    # batch size
-    n = imgs.shape[0]
-    img_size = imgs.shape[-1]
-    crop_max = img_size - output_size
-    imgs = np.transpose(imgs, (0, 2, 3, 1))
+    n, c, h, w = imgs.shape
+    crop_max = h - out + 1
     w1 = np.random.randint(0, crop_max, n)
     h1 = np.random.randint(0, crop_max, n)
-    # creates all sliding windows combinations of size (output_size)
-    windows = view_as_windows(
-        imgs, (1, output_size, output_size, 1))[..., 0,:,:, 0]
-    # selects a random window for each batch element
-    cropped_imgs = windows[np.arange(n), w1, h1]
-    return cropped_imgs
+    cropped = np.empty((n, c, out, out), dtype=imgs.dtype)
+    for i, (img, w11, h11) in enumerate(zip(imgs, w1, h1)):
+
+        cropped[i] = img[:, h11:h11 + out, w11:w11 + out]
+    return cropped
 
 def center_crop_image(image, output_size):
     h, w = image.shape[1:]
